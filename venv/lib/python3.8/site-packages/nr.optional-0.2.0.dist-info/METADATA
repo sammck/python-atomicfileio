@@ -1,0 +1,22 @@
+Metadata-Version: 2.1
+Name: nr.optional
+Version: 0.2.0
+Summary: Optional type in Python, allow mapping and flat-mapping if you also have nr.stream installed.
+Home-page: https://github.com/NiklasRosenstein/nr-python
+Author: Niklas Rosenstein
+Author-email: rosensteinniklas@gmail.com
+License: MIT
+Platform: UNKNOWN
+Requires-Python: >=3.5.0,<4.0.0
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+
+# nr.optional
+
+Provides an `Optional` class in Python. Makes handling with potential None values easy!
+
+---
+
+<p align="center">Copyright &copy; 2021 Niklas Rosenstein</p>
+
+

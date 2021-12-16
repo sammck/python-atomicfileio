@@ -1,0 +1,6 @@
+extensions = [
+  'sphinx_markdown_builder'
+]
+exclude_patterns = [
+  'venv',
+]

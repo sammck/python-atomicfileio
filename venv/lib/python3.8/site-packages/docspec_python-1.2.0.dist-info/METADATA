@@ -1,0 +1,48 @@
+Metadata-Version: 2.1
+Name: docspec-python
+Version: 1.2.0
+Summary: A parser based on lib2to3 producing docspec data from Python source code.
+Home-page: https://github.com/NiklasRosenstein/docspec
+Author: Niklas Rosenstein
+Author-email: rosensteinniklas@gmail.com
+License: MIT
+Platform: UNKNOWN
+Requires-Python: >=3.7.0,<4.0.0
+Description-Content-Type: text/markdown
+Requires-Dist: docspec (<2.0.0,>=1.2.0)
+Provides-Extra: test
+Requires-Dist: types-Deprecated ; extra == 'test'
+
+[docspec]: https://github.com/NiklasRosenstein/docspec
+
+# docspec-python
+
+A parser based on `lib2to3` procuding [docspec][] data from Python source code.
+
+Example:
+
+```
+from docspec_python import parse_python_module
+import docspec, sys
+docspec.dump_module(parse_python_module(sys.stdin, print_function=False), sys.stdout)
+```
+
+```
+$ docspec-python -p docspec | docspec --dump-tree --multiple | head
+module __init__
+| data __author__
+| data __version__
+| data __all__
+| data _ClassProxy
+| data _mapper
+| class Location
+| | data filename
+| | data lineno
+| class Decoration
+```
+
+---
+
+<p align="center">Copyright &copy; 2020, Niklas Rosenstein</p>
+
+

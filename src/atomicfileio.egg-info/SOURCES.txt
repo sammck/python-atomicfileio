@@ -1,0 +1,13 @@
+MANIFEST.in
+README.md
+setup.cfg
+setup.py
+src/atomicfileio/__init__.py
+src/atomicfileio/cmd.py
+src/atomicfileio.egg-info/PKG-INFO
+src/atomicfileio.egg-info/SOURCES.txt
+src/atomicfileio.egg-info/dependency_links.txt
+src/atomicfileio.egg-info/entry_points.txt
+src/atomicfileio.egg-info/not-zip-safe
+src/atomicfileio.egg-info/requires.txt
+src/atomicfileio.egg-info/top_level.txt

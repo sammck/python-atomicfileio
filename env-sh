@@ -1,0 +1,12 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+if [ "$#" -ne 0 ]; then
+  . "$SCRIPT_DIR/env-vars.sh"
+  bash "$@" || exit $?
+else
+  bash --init-file <(echo ". '$HOME/.bashrc'; . '$SCRIPT_DIR/env-vars.sh'")
+fi

@@ -1,0 +1,14 @@
+{
+  "python.pythonPath": "venv/bin/python",
+  "[python]": {
+      "editor.insertSpaces": true,
+      "editor.tabSize": 2
+    },
+  "terminal.integrated.gpuAcceleration": "off",
+  "terminal.integrated.fontSize": 18,
+  "terminal.integrated.fontFamily": "monospace",
+  "terminal.integrated.env.linux": {
+    "FLASK_APP": "flaskr",
+    "FLASK_ENV": "development"
+  },
+}

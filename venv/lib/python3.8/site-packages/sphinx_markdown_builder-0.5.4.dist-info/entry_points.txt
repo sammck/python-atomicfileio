@@ -1,0 +1,3 @@
+[sphinx.builders]
+markdown = sphinx_markdown_builder
+

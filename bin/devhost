@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import logging
+
+from iotbox.iotlib.core.util import merge_config
+
+logger = logging.getLogger(__name__)
+
+import textwrap
+import os
+import sys
+import asyncio
+import signal
+import argparse
+import json
+
+from quart import Quart, g, request
+
+from iotbox.iotlib.devmodel.impl import DevhostImpl
+from iotbox.iotlib.mqtt.session import MqttRequestError
+from iotbox.iotlib.core import log_exception, StartableTask
+from iotbox.iotlib.mqtt import (
+    MqttClient,
+    MqttMessage,
+    MqttError,
+    MqttProperties,
+    MqttPacketTypes,
+    RelTopic,
+    RelTopicTemplate,
+    MqttRequestContext,
+    SubscribeOptions,
+    get_mqtt_user_properties,
+    abs_topic,
+    raw_topic,
+    abs_topic_template,
+    raw_topic_template,
+  )
+
+from iotbox.iotlib.core.typehints import *
+
+svc: Optional[DevhostImpl] = None
+logging_started: bool = False
+debug_log: bool = False
+sig_processed: bool = False
+
+app = Quart(__name__)
+app.debug=True
+
+def json_result(data: Optional[JSONType]=None) -> JSONDictType:
+  result = dict(status='success', message='OK')
+  if not data is None:
+    result['data'] = data
+  return result
+
+def start_logging(cfg: Optional[JSONDictType]=None):
+  global logging_started
+  if not logging_started:
+    logging_started = True
+    logging.basicConfig(level=logging.DEBUG)
+
+@app.route('/shutdown')
+async def shutdown_from_http():
+  logger.debug("main: got /shutdown; raising SIGINT")
+  os.kill(os.getpid(), signal.SIGINT)
+  await app.devhost.shutdown()
+  return json_result()
+
+
+@app.route('/rpc/<path:path>', methods=['GET', 'POST'])
+async def rpc_from_http(path: str):
+  logger.debug(f"main: got /rpc; invoking {path}")
+  devhost: DevhostImpl = app.devhost
+  if request.method == 'POST':
+    rdata = await request.get_data(as_text=True)
+    payload = json.loads(rdata)
+  else:
+    kwa: JSONDictType = request.args.to_dict(flat=False)
+    payload = dict(data=kwa)
+  req = await devhost.x_local_invoke_rpc_method_return_context(path, payload)
+  return req.response.get_final_json_payload()
+
+@app.before_serving
+async def start_devhost():
+    logger.info("Quart before_serve -- starting the device host")
+    await svc.launch_once()
+    app.devhost = svc
+    logger.info("Quart before_serve --device host successfully started")
+    print(f"MQTT Device host running at topic {svc.raw_host_topic}", file=sys.stderr)
+
+@app.after_serving
+async def do_qshutdown():
+  try:
+    devhost: Optional[DevhostImpl] = getattr(app, 'devhost', None)
+    if devhost is None:
+      logger.info("Quart no longer serving, but no device host created; proceeding with quart shutdown")
+    else:
+      logger.info("Quart no longer serving--shutting down the device host")
+      try:
+        await devhost.shutdown()
+      except Exception as ex:
+        log_exception("Device host exited with exception; resuming quart shutdown")
+      logger.debug("Device host is shut down; proceeding with quart shutdown")
+  except Exception as ex:
+    log_exception("An exception occurred in do_qshutdown")
+
+async def amain(args: argparse.Namespace):
+  global debug_log
+  global svc
+
+  cfg_defaults: JSONDictType = dict(
+      debug_log=False,
+      clean_shutdown_timeout=10.0,
+    )
+  cfg: JSONDictType = dict(
+    )
+  if args.reconnect:
+    cfg.update(retry_mqtt=True),
+  if args.verbose > 1:
+    cfg.update(debug_log=True),
+  if args.config:
+    cfg.update(config_file=args.config)
+  if args.mqtt_host:
+    cfg.update(mqtt_host=args.mqtt_host)
+  if args.mqtt_port:
+    cfg.update(mqtt_port=args.mqtt_port)
+  if args.mqtt_user:
+    cfg.update(mqtt_user=args.mqtt_user)
+  if args.mqtt_password:
+    cfg.update(mqtt_password=args.mqtt_password)
+  if args.host_id:
+    cfg.update(host_id=args.host_id)
+  if args.wipe_db:
+    cfg.update(wipe_db=True)
+
+  cfg = merge_config(cfg_defaults, cfg, default_config_files=DevhostImpl.standard_default_config_files,  sticky_client_id=True)
+  debug_log = not not cfg['debug_log']
+
+  if debug_log:
+    logger.debug("main: Creating DevhostImpl")
+
+  svc = DevhostImpl(cfg, config_defaults=cfg_defaults, sticky_client_id=True, log_enabler=start_logging)
+  debug_log = svc.debug_log
+  if debug_log:
+    asyncio.get_event_loop().set_debug(True)
+    start_logging()
+  await svc.ainit()
+  logger.debug(f"main: Device ready to initialize at topic {svc.raw_host_topic}")
+
+  quart_task: Optional[Task] = None
+  try:
+    logger.debug("main: starting quart")
+    quart_task = asyncio.create_task(app.run_task())
+    logger.debug("main: waiting for device host to terminate")
+    await asyncio.wait([svc])
+    if debug_log:
+      logger.debug("main: device host has terminated, shutting down")
+    # await svc.shutdown()
+  except Exception as ex:
+    log_exception("main: received an exception; shutting down")
+  if not quart_task is None:
+    logger.debug("main: shutting down quart...")
+    await quart_task
+    logger.debug("main: quart finished shutting down...")
+  logger.debug("main: shutdown complete! Exiting...")
+
+def main():
+  global debug_log
+
+  parser = argparse.ArgumentParser(description="MQTT topic dumper")
+  parser.add_argument('--config', '-c', default=None,  help='The devhost config file. Other commandline options are overrides. Default=[devhost.yml or devhost.json if they exist, or None]')
+  parser.add_argument('--host-id', default=None,  help='The stable, globally unique devhost ID (and MQTT client ID) [$DEVHOST_ID or MQTT_CLIENT_ID or auto-generated]')
+  parser.add_argument('--mqtt-host', default=None,  help='The MQTT broker hostname [$MQTT_HOST]')
+  parser.add_argument('--mqtt-port', type=int, default=None, help='The MQTT broker port number [$MQTT_PORT or 1883]')
+  parser.add_argument('--mqtt-user',  default=None, help='The MQTT username [$MQTT_USER]')
+  parser.add_argument('--mqtt-password', default=None, help='The MQTT password [$MQTT_PASSWORD]')
+  parser.add_argument('--reconnect',action='store_true', default=False, help="Automatically reconnect forever on session failure")
+  parser.add_argument('--verbose', '-v', action='count', default=0, help="Enable verbose logging to stderr. May be repeated for more verbosity")
+  parser.add_argument('--wipe-db',action='store_true', default=False, help="Wipe the persistent storage and start fresh from config. DANGER!")
+  
+  args = parser.parse_args()
+  debug_log = args.verbose > 1
+  if args.verbose > 0:
+    start_logging()
+  
+  asyncio.run(amain(args), debug=args.verbose > 1)
+
+if __name__ == '__main__':
+  main()

@@ -1,0 +1,26 @@
+Metadata-Version: 2.1
+Name: nr.preconditions
+Version: 0.0.4
+Summary: Provides simple functions to assert the state of your program.
+Home-page: https://git.niklasrosenstein.com/NiklasRosenstein/nr
+Author: Niklas Rosenstein
+Author-email: nrosenstein@palantir.com
+License: MIT
+Platform: UNKNOWN
+Requires-Python: >=3.5.0,<4.0.0
+Description-Content-Type: text/markdown
+
+# nr.preconditions
+
+Provides simple functions to assert the state of your program.
+
+* `check_argument(value, message)`
+* `check_not_none(value, message=None)`
+* `check_instance_of(value, types, message=None)`
+* `check_subclass_of(cls, types, message=None)`
+
+---
+
+<p align="center">Copyright &copy; 2021 Niklas Rosenstein</p>
+
+

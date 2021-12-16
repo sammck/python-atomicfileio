@@ -1,0 +1,3 @@
+[console_scripts]
+atomic-overwite = atomicfileio.cmd:main
+

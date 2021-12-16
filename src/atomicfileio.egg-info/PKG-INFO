@@ -1,0 +1,57 @@
+Metadata-Version: 2.1
+Name: atomicfileio
+Version: 1.0.1
+Summary: Atomic overwrite of files
+Home-page: http://mckelvie.org
+Author: Sam McKelvie
+Author-email: dev@mckelvie.org
+License: MIT License v1.0
+Description: # iotlib
+        Python package for atomically updating files.
+        
+        
+        ## Dev setup
+        
+        To set up a development environment, 
+        
+        ```bash
+        cd $HOME
+        git clone git@github.com:sammck/python-atomicfileio.git
+        cd python-atomicfileio
+        # set environment variables as described above
+        ./init-env.sh
+        ```
+        
+        After successful initialization, the relevant env vars will be persisted into a gitignore'd file
+        `.dev-env`.  After that, you should no longer need to set those environment variables directly
+        
+        #### **Run a single command in shell environment**
+        ```bash
+        ./env-sh -c '<command> [<arg>...]'
+        ```
+        
+        #### **Run an interactive bash shell in shell environment**
+        ```bash
+        ./env-sh
+        ```
+        
+        #### **Open vscode with terminals and builds that will be in shell environment:**
+        ```bash
+        code .
+        ```
+        
+Keywords: atomic file rename
+Platform: UNKNOWN
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved
+Classifier: Operating System :: Linux
+Classifier: Operating System :: POSIX
+Classifier: Natural Language :: English
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Topic :: System :: Filesystems
+Classifier: Topic :: Utilities
+Provides-Extra: proxy

@@ -1,0 +1,26 @@
+Metadata-Version: 2.1
+Name: nr.fs
+Version: 1.6.3
+Summary: Filesystem and path manipulation tools.
+Home-page: https://git.niklasrosenstein.com/NiklasRosenstein/nr
+Author: Niklas Rosenstein
+Author-email: rosensteinniklas@gmail.com
+License: MIT
+Platform: UNKNOWN
+Description-Content-Type: text/markdown
+Requires-Dist: six (<2.0.0,>=1.11.0)
+
+# nr.fs
+
+&ndash; Filesystem and path manipulation tools.
+
+> Note: To use the `nr.fs.glob()` function, you need the [glob2] module
+> installed. It is not listed an install requirement to this module.
+
+  [glob2]: https://pypi.org/project/glob2/
+
+---
+
+<p align="center">Copyright &copy; 2020 Niklas Rosenstein</p>
+
+

@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+
+INSTANT_EXIT=True
+
+import logging
+import textwrap
+from iotbox.iotlib.mqtt.session import MqttRequestError
+
+logger = logging.getLogger(__name__)
+
+import asyncio
+
+from iotbox.iotlib.core import log_exception, StartableTask
+from iotbox.iotlib.core.typehints import *
+from iotbox.iotlib.mqtt import (
+    MqttClient,
+    MqttMessage,
+    MqttError,
+    MqttProperties,
+    MqttPacketTypes,
+    RelTopic,
+    RelTopicTemplate,
+    MqttRequestContext,
+    SubscribeOptions,
+    get_mqtt_user_properties,
+  )
+
+import os
+import sys
+import asyncio
+import json
+import uuid
+import signal
+import argparse
+
+
+
+class MqttService:
+  def __init__(self, cfg: JSONDictType, topic_template: RelTopicTemplate):
+    self.cfg: JSONDictType = cfg
+    self.retry_mqtt: bool = cfg.pop('retry_mqtt', False)
+    self.max_payload_display_size: int = cfg.pop('max_payload_display_size', 5000)
+    self.display_properties: bool = cfg.pop("display_properies", True)
+    self.payload_width: int = cfg.pop("payload_width", 140)
+    self.indent_json: bool = cfg.pop("indent_json", True)
+
+    self.topic_tmpl = topic_template
+    self.mqtt_client = MqttClient(cfg)
+    self.clean_shutting_down: bool = False
+    self.run_task: Optional[StartableTask] = None
+    self.dump_task: Optional[StartableTask] = None
+
+  async def ainit(self):
+    await self.mqtt_client.ainit()
+    self.run_task = StartableTask("mqtt-test service task")
+  
+  async def run(self, stask: StartableTask):
+    async def handle_request(req: MqttRequestContext) -> JSONType:
+      return await self.handle_request(req)
+
+    logger.debug("MqttService: started")
+    try:
+      tasks: List[StartableTask] = []
+      self.shutdown_ev = asyncio.Event()
+      try:
+        async with self.mqtt_client:
+          logger.debug("MqttService: shared client initialized")
+          self.dump_task = StartableTask('global MQTT dumper')
+          tasks.append(self.dump_task)
+          await self.dump_task.launch(self.dump_filtered_messages(self.dump_task, self.topic_tmpl))
+          logger.debug("Dumper task initialized")
+          logger.debug("MqttService: all child tasks initialized...")
+          stask.set_started()
+          await asyncio.wait(tasks+[self.shutdown_ev.wait()], return_when=asyncio.FIRST_COMPLETED)
+          logger.debug("MqttService: Got shutdown request; closing MQTT client")
+        logger.debug("MqttService: MQTT client closed")
+        self.shutdown_ev.set()
+        logger.debug("MqttService: Waiting for child tasks to exit")
+        pending = list(tasks)
+        await asyncio.sleep(1)
+        tout = 0
+        while len(pending) > 0:
+          done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED, timeout=tout)
+          tout = None
+          if len(done) > 0:
+            logger.debug("Got completion for %s" % [x.name for x in done])
+          if len(pending) > 0:
+            logger.debug("Still waiting for %s" % [x.name for x in pending])
+            [t.task.print_stack(limit=10) for t in pending]
+
+        logger.debug("MqttService: all child tasks exited...")
+      except CancelledError:
+        logger.debug("MqttService: got cancel, shutting down")
+        raise
+      except BaseException as ex:
+        log_exception("MqttService: got unhandled exception, shutting down: %s" % repr(ex))
+        raise
+      finally:
+        logger.debug("MqttService: stopping")
+        
+        await asyncio.shield(self.mqtt_client.stop())
+        if len(tasks) > 0:
+          await asyncio.gather(*tuple(tasks), return_exceptions=True)
+        logger.debug("MqttService: done stopping")
+    except BaseException as ex:
+      log_exception("MqttService: unhandled exception, exiting: %s" % repr(ex))
+      raise
+    finally:
+      logger.debug("MqttService: exiting")
+    
+  async def start(self):
+    await self.ainit()
+    await self.run_task.launch(self.run(self.run_task))
+
+  def fmt_payload_text(self, text: str, indent: int = 4) -> str:
+    ipref = ' '*indent
+    result: List[str] = []
+    for line in text.split('\n'):
+      prefix = '| '
+      while True:
+        nc = min(len(line), self.payload_width)
+        rline = f"{ipref}{prefix}{line[:nc]}"
+        result.append(rline)
+        line = line[nc:]
+        if len(line) == 0:
+          break
+        prefix = '+ '
+    return '\n'.join(result)
+
+  async def dump_filtered_messages(self, stask: StartableTask, topic_filter: RelTopicTemplate):
+    logger.debug("dump_filtered_messages: started")
+    try:
+      first_connect=True
+      while self.retry_mqtt or first_connect:
+        first_connect = False
+        logger.debug("dump_filtered_messages: waiting for connected context")
+        try:
+          async with await self.mqtt_client.session_context() as mqtt:  # type: MqttContext
+            logger.debug("dump_filtered_messages: got connected context")
+            async with mqtt.filtered_messages(topic_filter, subscription_id=None) as messages:
+              stask.set_started()
+              async for message in messages:
+                raw_top = message.msg_raw_topic
+                payload = message.payload
+                plen = len(payload)
+                print(f"PUBLISH {json.dumps(raw_top)}")
+                print(f"  qos={message.qos}, retain={message.retain}, len={plen}")
+                if self.display_properties and message.has_properties() :
+                  properties = message.properties
+                  if not properties.isEmpty():
+                    jprops = properties.json()
+                    if 'UserProperty' in jprops:
+                      user_props = message.user_properties
+                      jprops['UserProperty'] = user_props
+                    if len(jprops) > 0:
+                      print('  Properties:')
+                      for k in sorted(jprops.keys()):
+                        v = jprops[k]
+                        if isinstance(v, dict):
+                          try:
+                            sv = json.dumps(v, indent=2 if self.indent_json else None, sort_keys=True)
+                          except Exception:
+                            sv = str(v)
+                        elif isinstance(v, str):
+                          sv = json.dumps(v)
+                        else:
+                          sv = str(v)
+                        if len(sv) < self.payload_width-len(k)-3 and not '\n' in sv:
+                          print(f"    {k}={v}")
+                        else:
+                          print(f"    {k}=")
+                          print(self.fmt_payload_text(sv, 6))
+
+                if plen > 0 and plen <= self.max_payload_display_size:
+                  print("  Payload:")
+                  try:
+                    spl = payload.decode('utf-8')
+                    try:
+                      jpl: JSONType = json.loads(spl)
+                      if isinstance (jpl, (list, dict)):
+                        spl = json.dumps(jpl, indent=2 if self.indent_json else None, sort_keys=True)
+                      else:
+                        spl = json.dumps(spl)
+                    except Exception:
+                      spl = json.dumps(spl)
+                  except Exception:
+                    spl = str(payload)
+                  spl = self.fmt_payload_text(spl, 4)
+                  print(spl)
+
+        except MqttError as ex:
+          if self.clean_shutting_down:
+            logger.info("dump_filtered_messages shutting down cleanly")
+          else:
+            log_exception("dump_filtered_messages: MQTT session failed")
+    except BaseException as ex:
+      log_exception("dump_filtered_messages: Unhandled exception; exiting")
+      raise
+    finally:
+      logger.debug("dump_filtered_messages: exiting")
+
+  async def shutdown(self, sig):
+    self.clean_shutting_down = True
+    try:
+      if not sig is None:
+        logger.info(f"Received exit signal {sig.name}...")
+      logger.debug("Clean shutting down")
+      self.shutdown_ev.set()
+      logger.debug("Waiting for test task to exit")
+      await self.run_task.wait(shield=True, shield_caller=True)
+      logger.debug("test service run task exited, shutdown is final")
+
+    except BaseException as ex:
+      log_exception("mqtt-test shutdown: there was an unhandled exception")
+      raise
+
+  async def wait_for_stop(self):
+    await self.run_task.wait()
+
+
+async def amain(args: argparse.Namespace):
+
+  cfg: JSONDictType = dict(
+    sticky_client_id = False,
+    clean_shutdown_timeout=10.0,
+    retry_mqtt = args.reconnect,
+    debug_log = args.verbose > 1,
+    max_payload_display_size=args.max_payload_display_size,
+    display_properties = not args.no_properties,
+    indent_json = not args.no_indent_json,
+    payload_width = args.payload_width,
+  )
+  if args.host:
+    cfg.update(mqtt_host=args.host)
+  if args.port:
+    cfg.update(mqtt_port=args.port)
+  if args.user:
+    cfg.update(mqtt_user=args.user)
+  if args.password:
+    cfg.update(mqtt_password=args.password)
+
+  svc = MqttService(cfg, args.topic)
+  await svc.ainit()
+
+  async def register_sig(sig):
+    loop = asyncio.get_event_loop()
+
+    async def async_sig_handler(sig):
+      if INSTANT_EXIT:
+        os._exit(1)
+      logger.info("async SIGNAL %s; calling svc.shutdown" % sig.name)
+      await svc.shutdown(sig)
+      logger.info("async SIGNAL: svc.shutdown complete; remaining tasks:")
+
+    def sync_sig_handler():
+      logger.info("sync SIGNAL %s" % sig.name)
+      loop.create_task(async_sig_handler(sig))
+
+    loop.add_signal_handler(sig, sync_sig_handler)
+
+  if 'PID_FILE' in os.environ:
+    with open(os.environ['PID_FILE'], 'w') as fd:
+      print("%d" % os.getpid(), end='', file=fd)
+
+  await register_sig(signal.SIGTERM)
+  await register_sig(signal.SIGINT)
+  await register_sig(signal.SIGHUP)
+
+  # asyncio.create_task(monitor_tasks())
+
+  await svc.start()
+  await svc.wait_for_stop()
+
+def main():
+
+  parser = argparse.ArgumentParser(description="MQTT topic dumper")
+  parser.add_argument('topic', nargs='?', default='#',  help='The MQTT topic template to dump ["#"]')
+  parser.add_argument('--host', '-H', default=None,  help='The MQTT broker hostname [$MQTT_HOST]')
+  parser.add_argument('--port', '-P', type=int, default=None, help='The MQTT broker port number [$MQTT_PORT or 1883]')
+  parser.add_argument('--user', '-u', default=None, help='The MQTT username [$MQTT_USER]')
+  parser.add_argument('--password', '-p', default=None, help='The MQTT password [$MQTT_PASSWORD]')
+  parser.add_argument('--reconnect',action='store_true', default=False, help="Automatically reconnect forever on session failure")
+  parser.add_argument('--max-payload-display-size', type=int, default=5000, help="Maximum size of payload to display, in bytes [5000]")
+  parser.add_argument('--payload-width', type=int, default=140, help="Maximum line width for payload display [140]")
+  parser.add_argument('--no-indent-json',action='store_true', default=False, help="Do not pretty-print json payloads")
+  parser.add_argument('--no-properties',action='store_true', default=False, help="Do not display the properties")
+  parser.add_argument('--verbose', '-v', action='count', default=0, help="Enable verbose logging to stderr. May be repeated for more verbosity")
+  
+  args = parser.parse_args()
+  if args.verbose > 0:
+    logging.basicConfig(level=logging.DEBUG)
+  
+  asyncio.run(amain(args), debug=True)
+
+if __name__ == '__main__':
+  main()
